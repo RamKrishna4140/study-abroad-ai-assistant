@@ -1,3 +1,12 @@
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from fastapi import UploadFile, File
+from pypdf import PdfReader
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+
 import os
 from datetime import datetime
 
@@ -92,7 +101,7 @@ Rules:
     })
 
     completion = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         messages=messages
     )
 
@@ -108,33 +117,105 @@ Rules:
     return {"reply": reply}
 
 
-@app.get("/sessions")
-def get_sessions():
-    pipeline = [
-        {"$sort": {"created_at": -1}},
-        {
-            "$group": {
-                "_id": "$session_id",
-                "last_message": {"$first": "$user_message"},
-                "last_updated": {"$first": "$created_at"}
-            }
-        },
-        {"$sort": {"last_updated": -1}}
-    ]
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        os.makedirs("uploads", exist_ok=True)
 
-    sessions = list(chats_collection.aggregate(pipeline))
+        file_path = f"uploads/{file.filename}"
 
-    return {
-        "sessions": [
-            {
-                "session_id": item["_id"],
-                "last_message": item["last_message"],
-                "last_updated": item["last_updated"].isoformat()
-            }
-            for item in sessions
-        ]
-    }
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
+        pdf_reader = PdfReader(file_path)
+
+        extracted_text = ""
+
+        for page in pdf_reader.pages:
+            text = page.extract_text()
+            if text:
+                extracted_text += text + "\n"
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50
+        )
+
+        chunks = text_splitter.split_text(extracted_text)
+
+        pdf_chunks_collection = db["pdf_chunks"]
+
+        pdf_chunks_collection.delete_many({
+            "source": file.filename
+        })
+
+        for index, chunk in enumerate(chunks):
+            pdf_chunks_collection.insert_one({
+                "source": file.filename,
+                "chunk_index": index,
+                "text": chunk,
+                "created_at": datetime.utcnow()
+            })
+
+        return {
+            "message": "PDF uploaded and chunks saved successfully",
+            "filename": file.filename,
+            "characters": len(extracted_text),
+            "chunks_created": len(chunks)
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+    
+
+@app.post("/ask-pdf")
+async def ask_pdf(request: ChatRequest):
+    try:
+
+        pdf_chunks_collection = db["pdf_chunks"]
+
+        chunks = pdf_chunks_collection.find().limit(8)
+
+        context = ""
+
+        for chunk in chunks:
+            context += chunk["text"] + "\n"
+
+        prompt = f"""
+You are an AI Study Abroad Assistant.
+
+Answer ONLY from the PDF context below.
+
+PDF Context:
+{context}
+
+Question:
+{request.message}
+"""
+
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You answer questions from uploaded PDFs only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,
+        )
+
+        reply = completion.choices[0].message.content
+
+        return {
+            "reply": reply
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/sessions/{session_id}")
 def get_session_messages(session_id: str):

@@ -29,7 +29,7 @@ function Chat() {
   const loadChatHistory = async (sessionId) => {
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/chat-history/${sessionId}`
+        `http://127.0.0.1:8000/chat-history/${sessionId}`,
       );
 
       const data = await response.json();
@@ -63,7 +63,8 @@ function Chat() {
     setMessages([
       {
         role: "assistant",
-        content: "Hello! Ask me about universities, eligibility, or admissions.",
+        content:
+          "Hello! Ask me about universities, eligibility, or admissions.",
       },
     ]);
 
@@ -164,9 +165,9 @@ function Chat() {
         </button>
 
         <div className="space-y-2 overflow-y-auto">
-          {sessions.map((session) => (
+          {sessions.map((session, index) => (
             <div
-              key={session.session_id}
+              key={session.session_id || index}
               className={`flex items-center justify-between rounded-lg px-3 py-3 text-sm hover:bg-slate-800 ${
                 currentSession === session.session_id
                   ? "bg-slate-800 text-white"
@@ -179,7 +180,9 @@ function Chat() {
               >
                 {session.last_message
                   ? session.last_message.slice(0, 28)
-                  : session.session_id.slice(0, 20)}
+                  : session.session_id
+                    ? session.session_id.slice(0, 20)
+                    : "Untitled Chat"}
                 ...
               </button>
 
