@@ -1,21 +1,16 @@
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from fastapi import FastAPI, UploadFile, File, Form
-from pypdf import PdfReader
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-
 import os
 from datetime import datetime
 
+import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
 from pydantic import BaseModel
 from pymongo import MongoClient
+from pypdf import PdfReader
+from sentence_transformers import SentenceTransformer
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
@@ -24,8 +19,12 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 mongo_client = MongoClient(os.getenv("MONGO_URI"))
 mongo_client.admin.command("ping")
 print("MongoDB connected successfully")
+
 db = mongo_client["study_abroad_ai"]
 chats_collection = db["chats"]
+pdf_chunks_collection = db["pdf_chunks"]
+
+embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 app = FastAPI()
 
@@ -51,8 +50,7 @@ def home():
 @app.post("/chat")
 def chat(request: ChatRequest):
     previous_chats = list(
-        chats_collection
-        .find({"session_id": request.session_id})
+        chats_collection.find({"session_id": request.session_id})
         .sort("created_at", -1)
         .limit(5)
     )
@@ -60,13 +58,12 @@ def chat(request: ChatRequest):
     previous_chats.reverse()
 
     system_prompt = """
-    You are an AI Study Abroad Assistant created for students.
+You are an AI Study Abroad Assistant.
 
-        Your job:
+Your job:
 - Help students with study abroad guidance
 - Focus mainly on Italy and Europe
-- Explain university admissions clearly
-- Guide students about eligibility, scholarships, visa process, SOP, CV, and English-taught programs
+- Explain admissions, eligibility, scholarships, visa, SOP, CV, and English-taught programs
 
 Rules:
 - Be professional and student-friendly
@@ -74,35 +71,20 @@ Rules:
 - Use bullet points when helpful
 - Do not guarantee admission, scholarship, or visa approval
 - Mention that final eligibility depends on official university requirements
-- If the user types random or unclear text, politely ask them to clarify
 """
 
-    messages = [
-    {
-        "role": "system",
-        "content": system_prompt
-    }
-]
+    messages = [{"role": "system", "content": system_prompt}]
 
     for chat_item in previous_chats:
-        messages.append({
-            "role": "user",
-            "content": chat_item["user_message"]
-        })
+        messages.append({"role": "user", "content": chat_item["user_message"]})
+        messages.append({"role": "assistant", "content": chat_item["assistant_reply"]})
 
-        messages.append({
-            "role": "assistant",
-            "content": chat_item["assistant_reply"]
-        })
-
-    messages.append({
-        "role": "user",
-        "content": request.message
-    })
+    messages.append({"role": "user", "content": request.message})
 
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=messages
+        messages=messages,
+        temperature=0.4,
     )
 
     reply = completion.choices[0].message.content
@@ -122,17 +104,16 @@ async def upload_pdf(
     file: UploadFile = File(...),
     session_id: str = Form(...)
 ):
-    print("PDF UPLOAD SESSION:", session_id)
     try:
-        os.makedirs("uploads", exist_ok=True)
+        print("PDF UPLOAD SESSION:", session_id)
 
+        os.makedirs("uploads", exist_ok=True)
         file_path = f"uploads/{file.filename}"
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
         pdf_reader = PdfReader(file_path)
-
         extracted_text = ""
 
         for page in pdf_reader.pages:
@@ -141,36 +122,35 @@ async def upload_pdf(
                 extracted_text += text + "\n"
 
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
+            chunk_size=700,
+            chunk_overlap=100
         )
 
         chunks = text_splitter.split_text(extracted_text)
 
-        pdf_chunks_collection = db["pdf_chunks"]
-
-        pdf_chunks_collection.delete_many({
-            "session_id": session_id
-        })
+        pdf_chunks_collection.delete_many({"session_id": session_id})
 
         for index, chunk in enumerate(chunks):
+            embedding = embedding_model.encode(chunk).tolist()
+
             pdf_chunks_collection.insert_one({
                 "session_id": session_id,
                 "source": file.filename,
                 "chunk_index": index,
                 "text": chunk,
+                "embedding": embedding,
                 "created_at": datetime.utcnow()
             })
 
         chats_collection.insert_one({
-        "session_id": session_id,
-        "user_message": f"Uploaded PDF: {file.filename}",
-        "assistant_reply": f"PDF uploaded successfully: {file.filename}",
-        "created_at": datetime.utcnow()
-})
+            "session_id": session_id,
+            "user_message": f"Uploaded PDF: {file.filename}",
+            "assistant_reply": f"PDF uploaded successfully: {file.filename}",
+            "created_at": datetime.utcnow()
+        })
 
         return {
-            "message": "PDF uploaded and chunks saved successfully",
+            "message": "PDF uploaded and embedded successfully",
             "filename": file.filename,
             "session_id": session_id,
             "chunks_created": len(chunks)
@@ -178,19 +158,15 @@ async def upload_pdf(
 
     except Exception as e:
         return {"error": str(e)}
-    
+
 
 @app.post("/ask-pdf")
 async def ask_pdf(request: ChatRequest):
-    print("ASK PDF SESSION:", request.session_id)
     try:
-        pdf_chunks_collection = db["pdf_chunks"]
+        print("ASK PDF SESSION:", request.session_id)
 
         chunks = list(
-            pdf_chunks_collection
-            .find({"session_id": request.session_id})
-            .sort("chunk_index", 1)
-            .limit(12)
+            pdf_chunks_collection.find({"session_id": request.session_id})
         )
 
         if not chunks:
@@ -198,10 +174,32 @@ async def ask_pdf(request: ChatRequest):
                 "reply": "No PDF found for this chat. Please upload a PDF first, then ask your question in PDF Mode."
             }
 
-        context = ""
+        question_embedding = embedding_model.encode(request.message)
+
+        scored_chunks = []
 
         for chunk in chunks:
-            context += chunk["text"] + "\n\n"
+            chunk_embedding = np.array(chunk["embedding"])
+
+            similarity = np.dot(question_embedding, chunk_embedding) / (
+                np.linalg.norm(question_embedding) * np.linalg.norm(chunk_embedding)
+            )
+
+            scored_chunks.append({
+                "text": chunk["text"],
+                "score": similarity,
+                "source": chunk.get("source", "uploaded PDF")
+            })
+
+        scored_chunks = sorted(
+            scored_chunks,
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        top_chunks = scored_chunks[:5]
+
+        context = "\n\n".join([chunk["text"] for chunk in top_chunks])
 
         prompt = f"""
 You are an AI Study Abroad Assistant.
@@ -222,7 +220,7 @@ Question:
             messages=[
                 {
                     "role": "system",
-                    "content": "You answer questions strictly from the uploaded PDF context only."
+                    "content": "You answer questions strictly from uploaded PDF context only."
                 },
                 {
                     "role": "user",
@@ -241,36 +239,21 @@ Question:
             "created_at": datetime.utcnow()
         })
 
-        return {"reply": reply}
+        return {
+            "reply": reply,
+            "sources_used": [
+                {
+                    "source": chunk["source"],
+                    "score": float(chunk["score"])
+                }
+                for chunk in top_chunks
+            ]
+        }
 
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/sessions/{session_id}")
-def get_session_messages(session_id: str):
-    chats = list(
-        chats_collection
-        .find({"session_id": session_id})
-        .sort("created_at", 1)
-    )
 
-    messages = []
-
-    for chat in chats:
-        messages.append({
-            "role": "user",
-            "content": chat["user_message"]
-        })
-
-        messages.append({
-            "role": "assistant",
-            "content": chat["assistant_reply"]
-        })
-
-    return {
-        "session_id": session_id,
-        "messages": messages
-    }
 @app.get("/sessions")
 def get_sessions():
     pipeline = [
@@ -308,18 +291,12 @@ def get_chat_history(session_id: str):
         ).sort("created_at", 1)
     )
 
-    return {"messages": chats}   
-
-@app.get("/")
-def home():
-    return {"message": "AI Study Abroad Backend Running"}
+    return {"messages": chats}
 
 
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str):
     chats_result = chats_collection.delete_many({"session_id": session_id})
-
-    pdf_chunks_collection = db["pdf_chunks"]
     pdf_result = pdf_chunks_collection.delete_many({"session_id": session_id})
 
     return {
