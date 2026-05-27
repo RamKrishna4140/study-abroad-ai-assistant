@@ -5,7 +5,8 @@ function Chat() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "Hello! Ask me about universities, eligibility, or admissions.",
+      content:
+        "Hello! Ask me about universities, eligibility, admissions, or upload a PDF and ask from it.",
     },
   ]);
 
@@ -13,6 +14,8 @@ function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [currentSession, setCurrentSession] = useState("default-session");
+  const [pdfMode, setPdfMode] = useState(false);
+  const [uploadedPdf, setUploadedPdf] = useState(null);
 
   const messagesEndRef = useRef(null);
 
@@ -29,11 +32,10 @@ function Chat() {
   const loadChatHistory = async (sessionId) => {
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/chat-history/${sessionId}`,
+        `http://127.0.0.1:8000/chat-history/${sessionId}`
       );
 
       const data = await response.json();
-
       const formattedMessages = [];
 
       data.messages.forEach((msg) => {
@@ -59,12 +61,14 @@ function Chat() {
     const newSessionId = `session-${Date.now()}`;
 
     setCurrentSession(newSessionId);
+    setPdfMode(false);
+    setUploadedPdf(null);
 
     setMessages([
       {
         role: "assistant",
         content:
-          "Hello! Ask me about universities, eligibility, or admissions.",
+          "Hello! Ask me about universities, eligibility, admissions, or upload a PDF and ask from it.",
       },
     ]);
 
@@ -87,10 +91,66 @@ function Chat() {
     }
   };
 
+  const handlePdfUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const sessionToUse = currentSession;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("session_id", sessionToUse);
+
+    setUploadedPdf(file.name);
+    setCurrentSession(sessionToUse);
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: `Uploading PDF: ${file.name}...`,
+      },
+    ]);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/upload-pdf", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.error
+            ? `PDF upload failed: ${data.error}`
+            : `PDF uploaded successfully: ${file.name}\n\nPDF Mode is ready. Ask questions from this document.`,
+        },
+      ]);
+
+      setCurrentSession(sessionToUse);
+      setPdfMode(true);
+      fetchSessions();
+    } catch (error) {
+      console.log(error);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "PDF upload failed. Please check if backend is running.",
+        },
+      ]);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
     const currentInput = input;
+    const sessionToUse = currentSession;
 
     setMessages((prev) => [
       ...prev,
@@ -104,14 +164,18 @@ function Chat() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/chat", {
+      const endpoint = pdfMode
+        ? "http://127.0.0.1:8000/ask-pdf"
+        : "http://127.0.0.1:8000/chat";
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           message: currentInput,
-          session_id: currentSession,
+          session_id: sessionToUse,
         }),
       });
 
@@ -121,7 +185,7 @@ function Chat() {
         ...prev,
         {
           role: "assistant",
-          content: data.reply,
+          content: data.reply || data.error || "No response received.",
         },
       ]);
 
@@ -153,7 +217,6 @@ function Chat() {
 
   return (
     <div className="flex h-screen bg-[#020617] text-white">
-      {/* Sidebar */}
       <aside className="w-72 border-r border-slate-800 bg-[#0f172a] p-4">
         <h2 className="mb-6 text-xl font-bold">Chat Sessions</h2>
 
@@ -181,8 +244,8 @@ function Chat() {
                 {session.last_message
                   ? session.last_message.slice(0, 28)
                   : session.session_id
-                    ? session.session_id.slice(0, 20)
-                    : "Untitled Chat"}
+                  ? session.session_id.slice(0, 20)
+                  : "Untitled Chat"}
                 ...
               </button>
 
@@ -197,10 +260,15 @@ function Chat() {
         </div>
       </aside>
 
-      {/* Chat Area */}
       <main className="flex flex-1 flex-col">
         <div className="border-b border-slate-800 px-8 py-5">
           <h1 className="text-3xl font-bold">AI Study Abroad Assistant</h1>
+
+          <p className="mt-1 text-sm text-slate-400">
+            {pdfMode
+              ? `PDF Mode Active${uploadedPdf ? ` — ${uploadedPdf}` : ""}`
+              : "Normal Chat Mode"}
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto scroll-smooth px-8 py-6">
@@ -235,10 +303,34 @@ function Chat() {
         </div>
 
         <div className="border-t border-slate-800 p-6">
+          <div className="mx-auto mb-4 flex max-w-4xl gap-4">
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={handlePdfUpload}
+              className="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm"
+            />
+
+            <button
+              onClick={() => setPdfMode((prev) => !prev)}
+              className={`rounded-xl px-6 py-3 font-medium ${
+                pdfMode
+                  ? "bg-green-600 hover:bg-green-700"
+                  : "bg-slate-700 hover:bg-slate-600"
+              }`}
+            >
+              {pdfMode ? "PDF Mode On" : "PDF Mode Off"}
+            </button>
+          </div>
+
           <div className="mx-auto flex max-w-4xl gap-4">
             <input
               type="text"
-              placeholder="Ask about universities..."
+              placeholder={
+                pdfMode
+                  ? "Ask a question from uploaded PDF..."
+                  : "Ask about universities..."
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

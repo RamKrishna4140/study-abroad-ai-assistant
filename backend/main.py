@@ -1,6 +1,6 @@
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from fastapi import UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from pypdf import PdfReader
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -118,7 +118,11 @@ Rules:
 
 
 @app.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    session_id: str = Form(...)
+):
+    print("PDF UPLOAD SESSION:", session_id)
     try:
         os.makedirs("uploads", exist_ok=True)
 
@@ -146,21 +150,29 @@ async def upload_pdf(file: UploadFile = File(...)):
         pdf_chunks_collection = db["pdf_chunks"]
 
         pdf_chunks_collection.delete_many({
-            "source": file.filename
+            "session_id": session_id
         })
 
         for index, chunk in enumerate(chunks):
             pdf_chunks_collection.insert_one({
+                "session_id": session_id,
                 "source": file.filename,
                 "chunk_index": index,
                 "text": chunk,
                 "created_at": datetime.utcnow()
             })
 
+        chats_collection.insert_one({
+        "session_id": session_id,
+        "user_message": f"Uploaded PDF: {file.filename}",
+        "assistant_reply": f"PDF uploaded successfully: {file.filename}",
+        "created_at": datetime.utcnow()
+})
+
         return {
             "message": "PDF uploaded and chunks saved successfully",
             "filename": file.filename,
-            "characters": len(extracted_text),
+            "session_id": session_id,
             "chunks_created": len(chunks)
         }
 
@@ -170,21 +182,33 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/ask-pdf")
 async def ask_pdf(request: ChatRequest):
+    print("ASK PDF SESSION:", request.session_id)
     try:
-
         pdf_chunks_collection = db["pdf_chunks"]
 
-        chunks = pdf_chunks_collection.find().limit(8)
+        chunks = list(
+            pdf_chunks_collection
+            .find({"session_id": request.session_id})
+            .sort("chunk_index", 1)
+            .limit(12)
+        )
+
+        if not chunks:
+            return {
+                "reply": "No PDF found for this chat. Please upload a PDF first, then ask your question in PDF Mode."
+            }
 
         context = ""
 
         for chunk in chunks:
-            context += chunk["text"] + "\n"
+            context += chunk["text"] + "\n\n"
 
         prompt = f"""
 You are an AI Study Abroad Assistant.
 
-Answer ONLY from the PDF context below.
+Answer ONLY from the uploaded PDF context below.
+If the answer is not available in the PDF, say:
+"I could not find this information in the uploaded PDF."
 
 PDF Context:
 {context}
@@ -198,21 +222,26 @@ Question:
             messages=[
                 {
                     "role": "system",
-                    "content": "You answer questions from uploaded PDFs only."
+                    "content": "You answer questions strictly from the uploaded PDF context only."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.3,
+            temperature=0.2,
         )
 
         reply = completion.choices[0].message.content
 
-        return {
-            "reply": reply
-        }
+        chats_collection.insert_one({
+            "session_id": request.session_id,
+            "user_message": request.message,
+            "assistant_reply": reply,
+            "created_at": datetime.utcnow()
+        })
+
+        return {"reply": reply}
 
     except Exception as e:
         return {"error": str(e)}
@@ -244,8 +273,30 @@ def get_session_messages(session_id: str):
     }
 @app.get("/sessions")
 def get_sessions():
-    sessions = chats_collection.distinct("session_id")
-    return {"sessions": sessions}
+    pipeline = [
+        {"$sort": {"created_at": -1}},
+        {
+            "$group": {
+                "_id": "$session_id",
+                "last_message": {"$first": "$user_message"},
+                "last_updated": {"$first": "$created_at"}
+            }
+        },
+        {"$sort": {"last_updated": -1}}
+    ]
+
+    sessions = list(chats_collection.aggregate(pipeline))
+
+    return {
+        "sessions": [
+            {
+                "session_id": item["_id"],
+                "last_message": item.get("last_message", "Untitled Chat"),
+                "last_updated": item["last_updated"].isoformat()
+            }
+            for item in sessions
+        ]
+    }
 
 
 @app.get("/chat-history/{session_id}")
@@ -266,9 +317,13 @@ def home():
 
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str):
-    result = chats_collection.delete_many({"session_id": session_id})
+    chats_result = chats_collection.delete_many({"session_id": session_id})
+
+    pdf_chunks_collection = db["pdf_chunks"]
+    pdf_result = pdf_chunks_collection.delete_many({"session_id": session_id})
 
     return {
         "message": "Session deleted successfully",
-        "deleted_count": result.deleted_count
+        "deleted_chats": chats_result.deleted_count,
+        "deleted_pdf_chunks": pdf_result.deleted_count
     }
