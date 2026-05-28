@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
 function Chat() {
@@ -11,58 +12,90 @@ function Chat() {
   ]);
 
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [sessions, setSessions] = useState([]);
-  const [currentSession, setCurrentSession] = useState("default-session");
+  const [sessionId, setSessionId] = useState(`session-${Date.now()}`);
+  const [selectedFile, setSelectedFile] = useState(null);
   const [pdfMode, setPdfMode] = useState(false);
-  const [uploadedPdf, setUploadedPdf] = useState(null);
+  const [pdfFileName, setPdfFileName] = useState("");
 
   const messagesEndRef = useRef(null);
 
+  const API_BASE = "http://127.0.0.1:8000";
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
   const fetchSessions = async () => {
     try {
-      const response = await fetch("http://127.0.0.1:8000/sessions");
-      const data = await response.json();
-      setSessions(data.sessions || []);
+      const response = await axios.get(`${API_BASE}/sessions`);
+      setSessions(response.data.sessions || []);
     } catch (error) {
-      console.log(error);
+      console.error(error);
     }
   };
 
-  const loadChatHistory = async (sessionId) => {
+  const loadChat = async (id) => {
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/chat-history/${sessionId}`
+      const response = await axios.get(
+        `${API_BASE}/chat-history/${id}`
       );
 
-      const data = await response.json();
-      const formattedMessages = [];
+      const loadedMessages = [];
 
-      data.messages.forEach((msg) => {
-        formattedMessages.push({
+      response.data.messages.forEach((msg) => {
+        loadedMessages.push({
           role: "user",
-          content: msg.user_message,
+          content: msg.user_message || "",
         });
 
-        formattedMessages.push({
+        loadedMessages.push({
           role: "assistant",
-          content: msg.assistant_reply,
+          content: msg.assistant_reply || "",
+          sources: msg.sources_used || [],
         });
       });
 
-      setMessages(formattedMessages);
-      setCurrentSession(sessionId);
+      setMessages(loadedMessages);
+
+      setSessionId(id);
+
+      const pdfMessage = response.data.messages.find((m) =>
+        m.assistant_reply?.includes("PDF uploaded successfully")
+      );
+
+      if (pdfMessage) {
+        setPdfMode(true);
+
+        const match =
+          pdfMessage.assistant_reply.match(
+            /PDF uploaded successfully:\s(.+)/
+          );
+
+        if (match) {
+          setPdfFileName(match[1]);
+        }
+      } else {
+        setPdfMode(false);
+        setPdfFileName("");
+      }
     } catch (error) {
-      console.log(error);
+      console.error(error);
     }
   };
 
-  const handleNewChat = () => {
-    const newSessionId = `session-${Date.now()}`;
+  const createNewChat = () => {
+    const newSession = `session-${Date.now()}`;
 
-    setCurrentSession(newSessionId);
-    setPdfMode(false);
-    setUploadedPdf(null);
+    setSessionId(newSession);
 
     setMessages([
       {
@@ -72,286 +105,319 @@ function Chat() {
       },
     ]);
 
-    setInput("");
+    setPdfMode(false);
+    setPdfFileName("");
   };
 
-  const deleteSession = async (sessionId) => {
+  const deleteSession = async (id) => {
     try {
-      await fetch(`http://127.0.0.1:8000/sessions/${sessionId}`, {
-        method: "DELETE",
-      });
+      await axios.delete(`${API_BASE}/sessions/${id}`);
 
-      await fetchSessions();
+      fetchSessions();
 
-      if (currentSession === sessionId) {
-        handleNewChat();
+      if (id === sessionId) {
+        createNewChat();
       }
     } catch (error) {
-      console.log(error);
+      console.error(error);
     }
   };
 
-  const handlePdfUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const sessionToUse = currentSession;
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("session_id", sessionToUse);
-
-    setUploadedPdf(file.name);
-    setCurrentSession(sessionToUse);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: `Uploading PDF: ${file.name}...`,
-      },
-    ]);
+  const uploadPDF = async () => {
+    if (!selectedFile) return;
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/upload-pdf", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: data.error
-            ? `PDF upload failed: ${data.error}`
-            : `PDF uploaded successfully: ${file.name}\n\nPDF Mode is ready. Ask questions from this document.`,
+          content: `Uploading PDF: ${selectedFile.name}...`,
         },
       ]);
 
-      setCurrentSession(sessionToUse);
+      const formData = new FormData();
+
+      formData.append("file", selectedFile);
+      formData.append("session_id", sessionId);
+
+      const response = await axios.post(
+        `${API_BASE}/upload-pdf`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+
       setPdfMode(true);
-      fetchSessions();
-    } catch (error) {
-      console.log(error);
+      setPdfFileName(selectedFile.name);
 
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "PDF upload failed. Please check if backend is running.",
+          content: `PDF uploaded successfully: ${selectedFile.name}\n\nPDF Mode is ready. Ask questions from this document.`,
+        },
+      ]);
+
+      fetchSessions();
+    } catch (error) {
+      console.error(error);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "PDF upload failed.",
         },
       ]);
     }
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim()) return;
+
+    const userMessage = {
+      role: "user",
+      content: input,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
 
     const currentInput = input;
-    const sessionToUse = currentSession;
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        content: currentInput,
-      },
-    ]);
 
     setInput("");
-    setIsLoading(true);
 
     try {
-      const endpoint = pdfMode
-        ? "http://127.0.0.1:8000/ask-pdf"
-        : "http://127.0.0.1:8000/chat";
+      const endpoint = pdfMode ? "/ask-pdf" : "/chat";
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      const response = await axios.post(
+        `${API_BASE}${endpoint}`,
+        {
           message: currentInput,
-          session_id: sessionToUse,
-        }),
-      });
+          session_id: sessionId,
+        }
+      );
 
-      const data = await response.json();
+      const data = response.data;
 
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: data.reply || data.error || "No response received.",
+          content:
+            data.reply ||
+            data.error ||
+            "No response received.",
+          sources: data.sources_used || [],
         },
       ]);
 
       fetchSessions();
     } catch (error) {
-      console.log(error);
+      console.error(error);
 
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "Something went wrong. Please check if backend is running.",
+          content: "Something went wrong.",
         },
       ]);
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchSessions();
-  }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
-  }, [messages, isLoading]);
-
   return (
     <div className="flex h-screen bg-[#020617] text-white">
-      <aside className="w-72 border-r border-slate-800 bg-[#0f172a] p-4">
-        <h2 className="mb-6 text-xl font-bold">Chat Sessions</h2>
+      {/* SIDEBAR */}
+      <div className="w-[290px] border-r border-slate-800 bg-[#08112b] p-4">
+        <h1 className="mb-6 text-3xl font-bold">
+          Chat Sessions
+        </h1>
 
         <button
-          onClick={handleNewChat}
-          className="mb-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-medium hover:bg-blue-700"
+          onClick={createNewChat}
+          className="mb-6 w-full rounded-xl bg-blue-600 py-4 font-semibold hover:bg-blue-700"
         >
           + New Chat
         </button>
 
-        <div className="space-y-2 overflow-y-auto">
-          {sessions.map((session, index) => (
+        <div className="space-y-3">
+          {sessions.map((session) => (
             <div
-              key={session.session_id || index}
-              className={`flex items-center justify-between rounded-lg px-3 py-3 text-sm hover:bg-slate-800 ${
-                currentSession === session.session_id
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-300"
+              key={session.session_id}
+              className={`flex items-center justify-between rounded-xl px-4 py-4 text-sm cursor-pointer ${
+                session.session_id === sessionId
+                  ? "bg-slate-700"
+                  : "bg-transparent hover:bg-slate-800"
               }`}
             >
-              <button
-                onClick={() => loadChatHistory(session.session_id)}
-                className="flex-1 text-left"
+              <div
+                className="truncate"
+                onClick={() =>
+                  loadChat(session.session_id)
+                }
               >
-                {session.last_message
-                  ? session.last_message.slice(0, 28)
-                  : session.session_id
-                  ? session.session_id.slice(0, 20)
-                  : "Untitled Chat"}
-                ...
-              </button>
+                {session.last_message || "Untitled Chat"}
+              </div>
 
               <button
-                onClick={() => deleteSession(session.session_id)}
-                className="ml-2 text-red-400 hover:text-red-500"
+                onClick={() =>
+                  deleteSession(session.session_id)
+                }
+                className="ml-3 text-red-400 hover:text-red-500"
               >
                 ✕
               </button>
             </div>
           ))}
         </div>
-      </aside>
+      </div>
 
-      <main className="flex flex-1 flex-col">
+      {/* MAIN */}
+      <div className="flex flex-1 flex-col">
+        {/* HEADER */}
         <div className="border-b border-slate-800 px-8 py-5">
-          <h1 className="text-3xl font-bold">AI Study Abroad Assistant</h1>
+          <h1 className="text-5xl font-bold">
+            AI Study Abroad Assistant
+          </h1>
 
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-2 text-lg text-slate-400">
             {pdfMode
-              ? `PDF Mode Active${uploadedPdf ? ` — ${uploadedPdf}` : ""}`
+              ? `PDF Mode Active — ${pdfFileName}`
               : "Normal Chat Mode"}
           </p>
         </div>
 
+        {/* CHAT AREA */}
         <div className="flex-1 overflow-y-auto scroll-smooth px-8 py-6">
           <div className="mx-auto max-w-4xl space-y-6">
             {messages.map((msg, index) => (
               <div
                 key={index}
                 className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
+                  msg.role === "user"
+                    ? "justify-end"
+                    : "justify-start"
                 }`}
               >
                 <div
                   className={`max-w-3xl rounded-2xl px-5 py-4 text-sm leading-7 ${
-                    msg.role === "user" ? "bg-blue-600" : "bg-slate-800"
+                    msg.role === "user"
+                      ? "bg-blue-600"
+                      : "bg-slate-800"
                   }`}
                 >
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown>
+                    {msg.content || ""}
+                  </ReactMarkdown>
+
+                  {Array.isArray(msg.sources) &&
+                    msg.sources.length > 0 && (
+                      <div className="mt-4 border-t border-slate-700 pt-3">
+                        <p className="mb-2 text-xs font-semibold text-slate-400">
+                          Sources used:
+                        </p>
+
+                        <div className="space-y-1">
+                          {msg.sources.map(
+                            (source, sourceIndex) => (
+                              <div
+                                key={sourceIndex}
+                                className="rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-300"
+                              >
+                                {source?.source ||
+                                  "Uploaded PDF"}{" "}
+                                — relevance{" "}
+                                {typeof source?.score ===
+                                "number"
+                                  ? `${(
+                                      source.score * 100
+                                    ).toFixed(1)}%`
+                                  : "N/A"}
+                              </div>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
                 </div>
               </div>
             ))}
-
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl bg-slate-800 px-5 py-4 text-sm">
-                  Thinking...
-                </div>
-              </div>
-            )}
 
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        <div className="border-t border-slate-800 p-6">
-          <div className="mx-auto mb-4 flex max-w-4xl gap-4">
-            <input
-              type="file"
-              accept="application/pdf"
-              onChange={handlePdfUpload}
-              className="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm"
-            />
-
-            <button
-              onClick={() => setPdfMode((prev) => !prev)}
-              className={`rounded-xl px-6 py-3 font-medium ${
-                pdfMode
-                  ? "bg-green-600 hover:bg-green-700"
-                  : "bg-slate-700 hover:bg-slate-600"
-              }`}
-            >
-              {pdfMode ? "PDF Mode On" : "PDF Mode Off"}
-            </button>
-          </div>
-
-          <div className="mx-auto flex max-w-4xl gap-4">
-            <input
-              type="text"
-              placeholder={
-                pdfMode
-                  ? "Ask a question from uploaded PDF..."
-                  : "Ask about universities..."
-              }
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleSendMessage();
+        {/* INPUT AREA */}
+        <div className="border-t border-slate-800 px-8 py-6">
+          <div className="mx-auto max-w-4xl">
+            {/* PDF UPLOAD */}
+            <div className="mb-4 flex gap-4">
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={(e) =>
+                  setSelectedFile(e.target.files[0])
                 }
-              }}
-              disabled={isLoading}
-              className="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            />
+                className="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3"
+              />
 
-            <button
-              onClick={handleSendMessage}
-              disabled={isLoading}
-              className="rounded-xl bg-blue-600 px-6 py-3 font-medium hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoading ? "Thinking..." : "Send"}
-            </button>
+              <button
+                onClick={uploadPDF}
+                className="rounded-xl bg-green-600 px-6 py-3 font-semibold hover:bg-green-700"
+              >
+                Upload PDF
+              </button>
+
+              <button
+                onClick={() =>
+                  setPdfMode(!pdfMode)
+                }
+                className={`rounded-xl px-6 py-3 font-semibold ${
+                  pdfMode
+                    ? "bg-green-600"
+                    : "bg-slate-700"
+                }`}
+              >
+                {pdfMode
+                  ? "PDF Mode On"
+                  : "PDF Mode Off"}
+              </button>
+            </div>
+
+            {/* CHAT INPUT */}
+            <div className="flex gap-4">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) =>
+                  setInput(e.target.value)
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleSendMessage();
+                  }
+                }}
+                placeholder={
+                  pdfMode
+                    ? "Ask a question from uploaded PDF..."
+                    : "Ask about universities..."
+                }
+                className="flex-1 rounded-2xl border border-slate-700 bg-[#0f172a] px-6 py-4 text-white outline-none"
+              />
+
+              <button
+                onClick={handleSendMessage}
+                className="rounded-2xl bg-blue-600 px-8 py-4 font-semibold hover:bg-blue-700"
+              >
+                Send
+              </button>
+            </div>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
