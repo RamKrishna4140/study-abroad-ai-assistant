@@ -1,3 +1,4 @@
+from bson import ObjectId
 from fastapi.responses import StreamingResponse
 import os
 from datetime import datetime
@@ -27,6 +28,10 @@ db = mongo_client["study_abroad_ai"]
 chats_collection = db["chats"]
 pdf_chunks_collection = db["pdf_chunks"]
 knowledge_collection = db["knowledge_chunks"]
+students_collection = db["students"]
+timeline_collection = db["student_timeline"]
+student_documents_collection = db["student_documents"]
+applications_collection = db["student_applications"]
 
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
@@ -54,6 +59,7 @@ def home():
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+
     previous_chats = list(
         chats_collection.find({"session_id": request.session_id})
         .sort("created_at", -1)
@@ -94,14 +100,37 @@ Rules:
 
     reply = completion.choices[0].message.content
 
-    chats_collection.insert_one({
-        "session_id": request.session_id,
-        "user_message": request.message,
-        "assistant_reply": reply,
-        "created_at": datetime.utcnow()
-    })
+    chats_collection.insert_one(
+        {
+            "session_id": request.session_id,
+            "user_message": request.message,
+            "assistant_reply": reply,
+            "created_at": datetime.utcnow(),
+        }
+    )
 
     return {"reply": reply}
+
+
+class StudentRequest(BaseModel):
+    name: str
+    phone: str = ""
+    email: str = ""
+    country: str = "India"
+    course: str = ""
+    university: str = ""
+    status: str = "New Lead"
+    notes: str = ""
+
+
+class ApplicationRequest(BaseModel):
+    student_id: str
+    university: str
+    course: str = ""
+    country: str = "Italy"
+    status: str = "Applied"
+    notes: str = ""
+
 
 @app.post("/chat-stream")
 async def chat_stream(request: ChatRequest):
@@ -123,7 +152,9 @@ async def chat_stream(request: ChatRequest):
 
         for chat_item in previous_chats:
             messages.append({"role": "user", "content": chat_item["user_message"]})
-            messages.append({"role": "assistant", "content": chat_item["assistant_reply"]})
+            messages.append(
+                {"role": "assistant", "content": chat_item["assistant_reply"]}
+            )
 
         messages.append({"role": "user", "content": request.message})
 
@@ -143,21 +174,20 @@ async def chat_stream(request: ChatRequest):
                 full_reply += token
                 yield token
 
-        chats_collection.insert_one({
-            "session_id": request.session_id,
-            "user_message": request.message,
-            "assistant_reply": full_reply,
-            "created_at": datetime.utcnow()
-        })
+        chats_collection.insert_one(
+            {
+                "session_id": request.session_id,
+                "user_message": request.message,
+                "assistant_reply": full_reply,
+                "created_at": datetime.utcnow(),
+            }
+        )
 
     return StreamingResponse(generate(), media_type="text/plain")
 
 
 @app.post("/upload-pdf")
-async def upload_pdf(
-    file: UploadFile = File(...),
-    session_id: str = Form(...)
-):
+async def upload_pdf(file: UploadFile = File(...), session_id: str = Form(...)):
     try:
         os.makedirs("uploads", exist_ok=True)
 
@@ -175,8 +205,7 @@ async def upload_pdf(
                 extracted_text += text + "\n"
 
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=700,
-            chunk_overlap=100
+            chunk_size=700, chunk_overlap=100
         )
 
         chunks = text_splitter.split_text(extracted_text)
@@ -186,29 +215,33 @@ async def upload_pdf(
         for index, chunk in enumerate(chunks):
             embedding = embedding_model.encode(chunk).tolist()
 
-            pdf_chunks_collection.insert_one({
-                "session_id": session_id,
-                "source": file.filename,
-                "document_id": file.filename,
-                "chunk_index": index,
-                "text": chunk,
-                "embedding": embedding,
-                "created_at": datetime.utcnow()
-            })
+            pdf_chunks_collection.insert_one(
+                {
+                    "session_id": session_id,
+                    "source": file.filename,
+                    "document_id": file.filename,
+                    "chunk_index": index,
+                    "text": chunk,
+                    "embedding": embedding,
+                    "created_at": datetime.utcnow(),
+                }
+            )
 
-        chats_collection.insert_one({
-            "session_id": session_id,
-            "user_message": f"Uploaded PDF: {file.filename}",
-            "assistant_reply": f"PDF uploaded successfully: {file.filename}",
-            "created_at": datetime.utcnow()
-        })
+        chats_collection.insert_one(
+            {
+                "session_id": session_id,
+                "user_message": f"Uploaded PDF: {file.filename}",
+                "assistant_reply": f"PDF uploaded successfully: {file.filename}",
+                "created_at": datetime.utcnow(),
+            }
+        )
 
         return {
             "message": "PDF uploaded and embedded successfully",
             "filename": file.filename,
             "document_id": file.filename,
             "session_id": session_id,
-            "chunks_created": len(chunks)
+            "chunks_created": len(chunks),
         }
 
     except Exception as e:
@@ -218,9 +251,7 @@ async def upload_pdf(
 @app.post("/ask-pdf")
 async def ask_pdf(request: ChatRequest):
     try:
-        chunks = list(
-            pdf_chunks_collection.find({"session_id": request.session_id})
-        )
+        chunks = list(pdf_chunks_collection.find({"session_id": request.session_id}))
 
         if not chunks:
             return {
@@ -238,11 +269,13 @@ async def ask_pdf(request: ChatRequest):
                 np.linalg.norm(question_embedding) * np.linalg.norm(chunk_embedding)
             )
 
-            scored_chunks.append({
-                "text": chunk["text"],
-                "score": similarity,
-                "source": chunk.get("source", "uploaded PDF")
-            })
+            scored_chunks.append(
+                {
+                    "text": chunk["text"],
+                    "score": similarity,
+                    "source": chunk.get("source", "uploaded PDF"),
+                }
+            )
 
         scored_chunks = sorted(scored_chunks, key=lambda x: x["score"], reverse=True)
         top_chunks = scored_chunks[:5]
@@ -268,12 +301,9 @@ Question:
             messages=[
                 {
                     "role": "system",
-                    "content": "You answer questions strictly from uploaded PDF context only."
+                    "content": "You answer questions strictly from uploaded PDF context only.",
                 },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "user", "content": prompt},
             ],
             temperature=0.2,
         )
@@ -281,25 +311,21 @@ Question:
         reply = completion.choices[0].message.content
 
         sources_used = [
-            {
-                "source": chunk["source"],
-                "score": float(chunk["score"])
-            }
+            {"source": chunk["source"], "score": float(chunk["score"])}
             for chunk in top_chunks
         ]
 
-        chats_collection.insert_one({
-            "session_id": request.session_id,
-            "user_message": request.message,
-            "assistant_reply": reply,
-            "sources_used": sources_used,
-            "created_at": datetime.utcnow()
-        })
+        chats_collection.insert_one(
+            {
+                "session_id": request.session_id,
+                "user_message": request.message,
+                "assistant_reply": reply,
+                "sources_used": sources_used,
+                "created_at": datetime.utcnow(),
+            }
+        )
 
-        return {
-            "reply": reply,
-            "sources_used": sources_used
-        }
+        return {"reply": reply, "sources_used": sources_used}
 
     except Exception as e:
         return {"error": str(e)}
@@ -324,33 +350,32 @@ async def upload_knowledge(file: UploadFile = File(...)):
                 extracted_text += text + "\n"
 
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=700,
-            chunk_overlap=100
+            chunk_size=700, chunk_overlap=100
         )
 
         chunks = text_splitter.split_text(extracted_text)
 
-        knowledge_collection.delete_many({
-            "document_id": file.filename
-        })
+        knowledge_collection.delete_many({"document_id": file.filename})
 
         for index, chunk in enumerate(chunks):
             embedding = embedding_model.encode(chunk).tolist()
 
-            knowledge_collection.insert_one({
-                "source": file.filename,
-                "document_id": file.filename,
-                "chunk_index": index,
-                "text": chunk,
-                "embedding": embedding,
-                "created_at": datetime.utcnow()
-            })
+            knowledge_collection.insert_one(
+                {
+                    "source": file.filename,
+                    "document_id": file.filename,
+                    "chunk_index": index,
+                    "text": chunk,
+                    "embedding": embedding,
+                    "created_at": datetime.utcnow(),
+                }
+            )
 
         return {
             "message": "Knowledge document uploaded successfully",
             "filename": file.filename,
             "document_id": file.filename,
-            "chunks_created": len(chunks)
+            "chunks_created": len(chunks),
         }
 
     except Exception as e:
@@ -362,9 +387,7 @@ async def ask_knowledge(request: ChatRequest):
     try:
         if request.document_id:
             chunks = list(
-                knowledge_collection.find({
-                    "document_id": request.document_id
-                })
+                knowledge_collection.find({"document_id": request.document_id})
             )
         else:
             chunks = list(knowledge_collection.find())
@@ -385,11 +408,13 @@ async def ask_knowledge(request: ChatRequest):
                 np.linalg.norm(question_embedding) * np.linalg.norm(chunk_embedding)
             )
 
-            scored_chunks.append({
-                "text": chunk["text"],
-                "score": similarity,
-                "source": chunk.get("source", "FLCS Knowledgebase")
-            })
+            scored_chunks.append(
+                {
+                    "text": chunk["text"],
+                    "score": similarity,
+                    "source": chunk.get("source", "FLCS Knowledgebase"),
+                }
+            )
 
         scored_chunks = sorted(scored_chunks, key=lambda x: x["score"], reverse=True)
         top_chunks = scored_chunks[:6]
@@ -416,12 +441,9 @@ Student Question:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are FLCS AI Counselor. Answer based only on the selected FLCS knowledge document context."
+                    "content": "You are FLCS AI Counselor. Answer based only on the selected FLCS knowledge document context.",
                 },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "user", "content": prompt},
             ],
             temperature=0.2,
         )
@@ -429,25 +451,21 @@ Student Question:
         reply = completion.choices[0].message.content
 
         sources_used = [
-            {
-                "source": chunk["source"],
-                "score": float(chunk["score"])
-            }
+            {"source": chunk["source"], "score": float(chunk["score"])}
             for chunk in top_chunks
         ]
 
-        chats_collection.insert_one({
-            "session_id": request.session_id,
-            "user_message": request.message,
-            "assistant_reply": reply,
-            "sources_used": sources_used,
-            "created_at": datetime.utcnow()
-        })
+        chats_collection.insert_one(
+            {
+                "session_id": request.session_id,
+                "user_message": request.message,
+                "assistant_reply": reply,
+                "sources_used": sources_used,
+                "created_at": datetime.utcnow(),
+            }
+        )
 
-        return {
-            "reply": reply,
-            "sources_used": sources_used
-        }
+        return {"reply": reply, "sources_used": sources_used}
 
     except Exception as e:
         return {"error": str(e)}
@@ -461,10 +479,10 @@ def get_sessions():
             "$group": {
                 "_id": "$session_id",
                 "last_message": {"$first": "$user_message"},
-                "last_updated": {"$first": "$created_at"}
+                "last_updated": {"$first": "$created_at"},
             }
         },
-        {"$sort": {"last_updated": -1}}
+        {"$sort": {"last_updated": -1}},
     ]
 
     sessions = list(chats_collection.aggregate(pipeline))
@@ -474,11 +492,12 @@ def get_sessions():
             {
                 "session_id": item["_id"],
                 "last_message": item.get("last_message", "Untitled Chat"),
-                "last_updated": item["last_updated"].isoformat()
+                "last_updated": item["last_updated"].isoformat(),
             }
             for item in sessions
         ]
     }
+
 
 @app.get("/knowledge-documents")
 def get_knowledge_documents():
@@ -488,10 +507,10 @@ def get_knowledge_documents():
                 "_id": "$document_id",
                 "source": {"$first": "$source"},
                 "chunks": {"$sum": 1},
-                "uploaded_at": {"$max": "$created_at"}
+                "uploaded_at": {"$max": "$created_at"},
             }
         },
-        {"$sort": {"uploaded_at": -1}}
+        {"$sort": {"uploaded_at": -1}},
     ]
 
     docs = list(knowledge_collection.aggregate(pipeline))
@@ -502,7 +521,7 @@ def get_knowledge_documents():
                 "document_id": doc["_id"],
                 "source": doc["source"],
                 "chunks": doc["chunks"],
-                "uploaded_at": doc["uploaded_at"].isoformat()
+                "uploaded_at": doc["uploaded_at"].isoformat(),
             }
             for doc in docs
         ]
@@ -511,23 +530,20 @@ def get_knowledge_documents():
 
 @app.delete("/knowledge-documents/{document_id}")
 def delete_knowledge_document(document_id: str):
-    result = knowledge_collection.delete_many({
-        "document_id": document_id
-    })
+    result = knowledge_collection.delete_many({"document_id": document_id})
 
     return {
         "message": "Knowledge document deleted successfully",
-        "deleted_chunks": result.deleted_count
+        "deleted_chunks": result.deleted_count,
     }
 
 
 @app.get("/chat-history/{session_id}")
 def get_chat_history(session_id: str):
     chats = list(
-        chats_collection.find(
-            {"session_id": session_id},
-            {"_id": 0}
-        ).sort("created_at", 1)
+        chats_collection.find({"session_id": session_id}, {"_id": 0}).sort(
+            "created_at", 1
+        )
     )
 
     return {"messages": chats}
@@ -541,5 +557,305 @@ def delete_session(session_id: str):
     return {
         "message": "Session deleted successfully",
         "deleted_chats": chats_result.deleted_count,
-        "deleted_pdf_chunks": pdf_result.deleted_count
+        "deleted_pdf_chunks": pdf_result.deleted_count,
+    }
+
+
+@app.post("/students")
+def create_student(student: StudentRequest):
+    student_data = student.dict()
+    student_data["created_at"] = datetime.utcnow()
+    student_data["updated_at"] = datetime.utcnow()
+
+    result = students_collection.insert_one(student_data)
+
+    return {
+        "message": "Student created successfully",
+        "student_id": str(result.inserted_id),
+    }
+
+
+@app.get("/students")
+def get_students():
+    students = list(students_collection.find().sort("created_at", -1))
+
+    formatted_students = []
+
+    for student in students:
+        student["_id"] = str(student["_id"])
+        formatted_students.append(student)
+
+    return {"students": formatted_students}
+
+
+@app.get("/students/{student_id}")
+def get_student(student_id: str):
+    student = students_collection.find_one({"_id": ObjectId(student_id)})
+
+    if not student:
+        return {"error": "Student not found"}
+
+    student["_id"] = str(student["_id"])
+
+    return {"student": student}
+
+
+@app.put("/students/{student_id}")
+def update_student(student_id: str, student: StudentRequest):
+    update_data = student.dict()
+    update_data["updated_at"] = datetime.utcnow()
+
+    result = students_collection.update_one(
+        {"_id": ObjectId(student_id)}, {"$set": update_data}
+    )
+
+    return {
+        "message": "Student updated successfully",
+        "modified_count": result.modified_count,
+    }
+
+
+@app.delete("/students/{student_id}")
+def delete_student(student_id: str):
+    result = students_collection.delete_one({"_id": ObjectId(student_id)})
+
+    return {
+        "message": "Student deleted successfully",
+        "deleted_count": result.deleted_count,
+    }
+
+
+@app.get("/dashboard-stats")
+def dashboard_stats():
+    total_students = students_collection.count_documents({})
+    offer_letters = students_collection.count_documents(
+        {"status": "Offer Letter Received"}
+    )
+    visa_approved = students_collection.count_documents({"status": "Visa Approved"})
+    pending = students_collection.count_documents({"status": "Pending"})
+
+    return {
+        "total_students": total_students,
+        "offer_letters": offer_letters,
+        "visa_approved": visa_approved,
+        "pending": pending,
+    }
+
+
+class TimelineRequest(BaseModel):
+    student_id: str
+    title: str
+    description: str = ""
+
+
+@app.post("/student-timeline")
+def add_timeline_event(event: TimelineRequest):
+    event_data = event.dict()
+    event_data["created_at"] = datetime.utcnow()
+
+    timeline_collection.insert_one(event_data)
+
+    return {"message": "Timeline event added successfully"}
+
+
+@app.get("/student-timeline/{student_id}")
+def get_timeline(student_id: str):
+    events = list(
+        timeline_collection.find({"student_id": student_id}, {"_id": 0}).sort(
+            "created_at", -1
+        )
+    )
+
+    return {"events": events}
+
+
+@app.post("/student-documents/{student_id}")
+async def upload_student_document(
+    student_id: str, file: UploadFile = File(...), document_type: str = Form(...)
+):
+    try:
+        os.makedirs("student_documents", exist_ok=True)
+
+        file_path = f"student_documents/{student_id}_{file.filename}"
+
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+
+        student_documents_collection.insert_one(
+            {
+                "student_id": student_id,
+                "document_type": document_type,
+                "filename": file.filename,
+                "file_path": file_path,
+                "uploaded_at": datetime.utcnow(),
+            }
+        )
+
+        return {"message": "Document uploaded successfully", "filename": file.filename}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/student-documents/{student_id}")
+def get_student_documents(student_id: str):
+    documents = list(
+        student_documents_collection.find({"student_id": student_id}, {"_id": 0}).sort(
+            "uploaded_at", -1
+        )
+    )
+
+    return {"documents": documents}
+
+
+@app.post("/crm-chat")
+def crm_chat(request: ChatRequest):
+    try:
+        students = list(students_collection.find({}, {"_id": 0}))
+
+        documents = list(student_documents_collection.find({}, {"_id": 0}))
+
+        timelines = list(timeline_collection.find({}, {"_id": 0}))
+
+        applications = list(applications_collection.find({}, {"_id": 0}))
+
+        crm_context = f"""
+Students:
+{students}
+
+Documents:
+{documents}
+
+Timelines:
+{timelines}
+
+applications:
+{applications}
+"""
+
+        prompt = f"""
+You are FLCS CRM Assistant.
+
+Use the CRM data below to answer the user's question.
+
+Rules:
+- Answer only from CRM data.
+- If information is missing, say it is not available.
+- Be concise and practical.
+- Use bullet points when helpful.
+
+CRM Data:
+{crm_context}
+
+User Question:
+{request.message}
+"""
+
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are FLCS CRM Assistant. You answer from student CRM data only.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+        )
+
+        reply = completion.choices[0].message.content
+
+        return {"reply": reply}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/student-applications")
+def add_student_application(application: ApplicationRequest):
+    application_data = application.dict()
+    application_data["created_at"] = datetime.utcnow()
+    application_data["updated_at"] = datetime.utcnow()
+
+    result = applications_collection.insert_one(application_data)
+
+    timeline_collection.insert_one(
+        {
+            "student_id": application.student_id,
+            "title": f"Application added: {application.university}",
+            "description": f"Course: {application.course} | Status: {application.status}",
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+    return {
+        "message": "Application added successfully",
+        "application_id": str(result.inserted_id),
+    }
+
+
+@app.get("/student-applications/{student_id}")
+def get_student_applications(student_id: str):
+    applications = list(
+        applications_collection.find({"student_id": student_id}).sort("created_at", -1)
+    )
+
+    formatted_applications = []
+
+    for application in applications:
+        application["_id"] = str(application["_id"])
+        formatted_applications.append(application)
+
+    return {"applications": formatted_applications}
+
+
+@app.put("/student-applications/{application_id}")
+def update_student_application(application_id: str, application: ApplicationRequest):
+    update_data = application.dict()
+    update_data["updated_at"] = datetime.utcnow()
+
+    result = applications_collection.update_one(
+        {"_id": ObjectId(application_id)}, {"$set": update_data}
+    )
+
+    timeline_collection.insert_one(
+        {
+            "student_id": application.student_id,
+            "title": f"Application updated: {application.university}",
+            "description": f"New Status: {application.status}",
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+    return {
+        "message": "Application updated successfully",
+        "modified_count": result.modified_count,
+    }
+
+
+@app.delete("/student-applications/{application_id}")
+def delete_student_application(application_id: str):
+    result = applications_collection.delete_one({"_id": ObjectId(application_id)})
+
+    return {
+        "message": "Application deleted successfully",
+        "deleted_count": result.deleted_count,
+    }
+    
+@app.get("/application-stats")
+def application_stats():
+    total_applications = applications_collection.count_documents({})
+    applied = applications_collection.count_documents({"status": "Applied"})
+    under_evaluation = applications_collection.count_documents({"status": "Under Evaluation"})
+    offer_letters = applications_collection.count_documents({"status": "Offer Letter Received"})
+    visa_approved = applications_collection.count_documents({"status": "Visa Approved"})
+    rejected = applications_collection.count_documents({"status": "Rejected"})
+
+    return {
+        "total_applications": total_applications,
+        "applied": applied,
+        "under_evaluation": under_evaluation,
+        "offer_letters": offer_letters,
+        "visa_approved": visa_approved,
+        "rejected": rejected
     }
