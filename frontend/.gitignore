@@ -53,3 +53,12 @@ backend/chroma_db/
 # Python Logs
 # -----------------------------
 *.log
+
+# Knowledgebase uploads
+backend/knowledge_uploads/
+
+# Student documents
+backend/student_documents/
+
+# Frontend environment
+frontend/.env

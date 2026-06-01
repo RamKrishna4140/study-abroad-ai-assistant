@@ -1,3 +1,8 @@
+# Imports
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from bson import ObjectId
 from fastapi.responses import StreamingResponse
 import os
@@ -32,9 +37,11 @@ students_collection = db["students"]
 timeline_collection = db["student_timeline"]
 student_documents_collection = db["student_documents"]
 applications_collection = db["student_applications"]
+tasks_collection = db["student_tasks"]
 
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
+# FastAPI App
 app = FastAPI()
 
 app.add_middleware(
@@ -44,17 +51,57 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Auth Setup
+SECRET_KEY = "change-this-secret-key-later"
+ALGORITHM = "HS256"
+
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
+
+security = HTTPBearer()
+
+# ADMIN_USERNAME = "admin"
+# ADMIN_PASSWORD_HASH = pwd_context.hash("admin123")
 
 
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default-session"
     document_id: Optional[str] = None
+    
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 @app.get("/")
 def home():
     return {"message": "AI Study Abroad Backend Running"}
+
+
+@app.get("/")
+def home():
+    return {"message": "AI Study Abroad Backend Running"}
+
+
+@app.post("/login")
+def login(request: LoginRequest):
+    if request.username != ADMIN_USERNAME or request.password != ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    token = create_token({
+        "sub": request.username,
+        "role": "admin"
+    })
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
 
 @app.post("/chat")
@@ -112,6 +159,7 @@ Rules:
     return {"reply": reply}
 
 
+# Pydantic Models
 class StudentRequest(BaseModel):
     name: str
     phone: str = ""
@@ -130,6 +178,33 @@ class ApplicationRequest(BaseModel):
     country: str = "Italy"
     status: str = "Applied"
     notes: str = ""
+
+
+class TaskRequest(BaseModel):
+    student_id: str
+    title: str
+    description: str = ""
+    due_date: str = ""
+    status: str = "Pending"
+    priority: str = "Medium"
+
+
+
+# Auth Helper Functions
+def create_token(data: dict):
+    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        return payload
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @app.post("/chat-stream")
@@ -719,6 +794,8 @@ def crm_chat(request: ChatRequest):
 
         applications = list(applications_collection.find({}, {"_id": 0}))
 
+        tasks = list(tasks_collection.find({}, {"_id": 0}))
+
         crm_context = f"""
 Students:
 {students}
@@ -731,6 +808,10 @@ Timelines:
 
 applications:
 {applications}
+
+Tasks:
+{tasks}
+
 """
 
         prompt = f"""
@@ -841,13 +922,18 @@ def delete_student_application(application_id: str):
         "message": "Application deleted successfully",
         "deleted_count": result.deleted_count,
     }
-    
+
+
 @app.get("/application-stats")
 def application_stats():
     total_applications = applications_collection.count_documents({})
     applied = applications_collection.count_documents({"status": "Applied"})
-    under_evaluation = applications_collection.count_documents({"status": "Under Evaluation"})
-    offer_letters = applications_collection.count_documents({"status": "Offer Letter Received"})
+    under_evaluation = applications_collection.count_documents(
+        {"status": "Under Evaluation"}
+    )
+    offer_letters = applications_collection.count_documents(
+        {"status": "Offer Letter Received"}
+    )
     visa_approved = applications_collection.count_documents({"status": "Visa Approved"})
     rejected = applications_collection.count_documents({"status": "Rejected"})
 
@@ -857,5 +943,158 @@ def application_stats():
         "under_evaluation": under_evaluation,
         "offer_letters": offer_letters,
         "visa_approved": visa_approved,
-        "rejected": rejected
+        "rejected": rejected,
     }
+
+
+@app.get("/all-applications")
+def get_all_applications():
+    applications = list(applications_collection.find())
+
+    formatted_applications = []
+
+    for application in applications:
+        student = students_collection.find_one(
+            {"_id": ObjectId(application["student_id"])}
+        )
+
+        formatted_applications.append(
+            {
+                "_id": str(application["_id"]),
+                "student_id": application["student_id"],
+                "student_name": student["name"] if student else "Unknown Student",
+                "university": application.get("university", ""),
+                "course": application.get("course", ""),
+                "country": application.get("country", ""),
+                "status": application.get("status", ""),
+                "notes": application.get("notes", ""),
+            }
+        )
+
+    return {"applications": formatted_applications}
+
+
+@app.post("/student-tasks")
+def create_task(task: TaskRequest):
+    task_data = task.dict()
+    task_data["created_at"] = datetime.utcnow()
+    task_data["updated_at"] = datetime.utcnow()
+
+    result = tasks_collection.insert_one(task_data)
+
+    timeline_collection.insert_one(
+        {
+            "student_id": task.student_id,
+            "title": f"Task added: {task.title}",
+            "description": f"Priority: {task.priority} | Due: {task.due_date}",
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+    return {"message": "Task created successfully", "task_id": str(result.inserted_id)}
+
+
+@app.get("/student-tasks/{student_id}")
+def get_student_tasks(student_id: str):
+    tasks = list(
+        tasks_collection.find({"student_id": student_id}).sort("created_at", -1)
+    )
+
+    formatted_tasks = []
+
+    for task in tasks:
+        task["_id"] = str(task["_id"])
+        formatted_tasks.append(task)
+
+    return {"tasks": formatted_tasks}
+
+
+@app.put("/student-tasks/{task_id}")
+def update_task(task_id: str, task: TaskRequest):
+    update_data = task.dict()
+    update_data["updated_at"] = datetime.utcnow()
+
+    result = tasks_collection.update_one(
+        {"_id": ObjectId(task_id)}, {"$set": update_data}
+    )
+
+    timeline_collection.insert_one(
+        {
+            "student_id": task.student_id,
+            "title": f"Task updated: {task.title}",
+            "description": f"Status: {task.status} | Priority: {task.priority}",
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+    return {
+        "message": "Task updated successfully",
+        "modified_count": result.modified_count,
+    }
+
+
+@app.delete("/student-tasks/{task_id}")
+def delete_task(task_id: str):
+    result = tasks_collection.delete_one({"_id": ObjectId(task_id)})
+
+    return {
+        "message": "Task deleted successfully",
+        "deleted_count": result.deleted_count,
+    }
+
+
+@app.get("/task-stats")
+def task_stats():
+    total_tasks = tasks_collection.count_documents({})
+    pending_tasks = tasks_collection.count_documents({"status": "Pending"})
+    in_progress_tasks = tasks_collection.count_documents({"status": "In Progress"})
+    completed_tasks = tasks_collection.count_documents({"status": "Completed"})
+    high_priority_tasks = tasks_collection.count_documents({"priority": "High"})
+
+    return {
+        "total_tasks": total_tasks,
+        "pending_tasks": pending_tasks,
+        "in_progress_tasks": in_progress_tasks,
+        "completed_tasks": completed_tasks,
+        "high_priority_tasks": high_priority_tasks,
+    }
+
+
+@app.get("/all-tasks")
+def get_all_tasks():
+    tasks = list(tasks_collection.find())
+
+    formatted_tasks = []
+
+    for task in tasks:
+        student = students_collection.find_one({"_id": ObjectId(task["student_id"])})
+
+        formatted_tasks.append(
+            {
+                "_id": str(task["_id"]),
+                "student_id": task["student_id"],
+                "student_name": student["name"] if student else "Unknown Student",
+                "title": task.get("title", ""),
+                "description": task.get("description", ""),
+                "due_date": task.get("due_date", ""),
+                "status": task.get("status", ""),
+                "priority": task.get("priority", ""),
+            }
+        )
+
+    return {"tasks": formatted_tasks}
+
+
+@app.get("/urgent-task-stats")
+def urgent_task_stats():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+
+    due_today = tasks_collection.count_documents(
+        {"due_date": today, "status": {"$ne": "Completed"}}
+    )
+
+    overdue = tasks_collection.count_documents(
+        {"due_date": {"$lt": today, "$ne": ""}, "status": {"$ne": "Completed"}}
+    )
+
+    return {"due_today": due_today, "overdue": overdue}
