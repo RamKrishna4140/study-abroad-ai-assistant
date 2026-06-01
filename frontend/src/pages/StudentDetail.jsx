@@ -66,6 +66,16 @@ function StudentDetail() {
     fetchTimeline();
   };
 
+  const [tasks, setTasks] = useState([]);
+
+  const [newTask, setNewTask] = useState({
+    title: "",
+    description: "",
+    due_date: "",
+    status: "Pending",
+    priority: "Medium",
+  });
+
   const updateApplicationStatus = async (application, newStatus) => {
     await axios.put(`${API_BASE}/student-applications/${application._id}`, {
       student_id: studentId,
@@ -114,6 +124,50 @@ function StudentDetail() {
     fetchTimeline();
   };
 
+  const fetchTasks = async () => {
+    const res = await axios.get(`${API_BASE}/student-tasks/${studentId}`);
+    setTasks(res.data.tasks || []);
+  };
+
+  const addTask = async () => {
+    if (!newTask.title.trim()) return;
+
+    await axios.post(`${API_BASE}/student-tasks`, {
+      student_id: studentId,
+      ...newTask,
+    });
+
+    setNewTask({
+      title: "",
+      description: "",
+      due_date: "",
+      status: "Pending",
+      priority: "Medium",
+    });
+
+    fetchTasks();
+    fetchTimeline();
+  };
+
+  const updateTaskStatus = async (task, newStatus) => {
+    await axios.put(`${API_BASE}/student-tasks/${task._id}`, {
+      student_id: studentId,
+      title: task.title,
+      description: task.description || "",
+      due_date: task.due_date || "",
+      status: newStatus,
+      priority: task.priority || "Medium",
+    });
+
+    fetchTasks();
+    fetchTimeline();
+  };
+
+  const deleteTask = async (taskId) => {
+    await axios.delete(`${API_BASE}/student-tasks/${taskId}`);
+    fetchTasks();
+  };
+
   const [timeline, setTimeline] = useState([]);
   const [newEvent, setNewEvent] = useState({
     title: "",
@@ -143,6 +197,7 @@ function StudentDetail() {
     fetchTimeline();
     fetchDocuments();
     fetchApplications();
+    fetchTasks();
   }, []);
 
   if (!student) {
@@ -345,6 +400,151 @@ function StudentDetail() {
                   <h2 className="mb-4 text-2xl font-semibold">
                     University Applications
                   </h2>
+                  <div className="mt-8 rounded-xl border border-slate-700 bg-slate-900 p-6">
+                    <h2 className="mb-4 text-2xl font-semibold">
+                      Student Tasks
+                    </h2>
+
+                    <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <input
+                        placeholder="Task Title"
+                        value={newTask.title}
+                        onChange={(e) =>
+                          setNewTask({
+                            ...newTask,
+                            title: e.target.value,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3"
+                      />
+
+                      <input
+                        type="date"
+                        value={newTask.due_date}
+                        onChange={(e) =>
+                          setNewTask({
+                            ...newTask,
+                            due_date: e.target.value,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3"
+                      />
+
+                      <select
+                        value={newTask.priority}
+                        onChange={(e) =>
+                          setNewTask({
+                            ...newTask,
+                            priority: e.target.value,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3"
+                      >
+                        <option>Low</option>
+                        <option>Medium</option>
+                        <option>High</option>
+                      </select>
+
+                      <select
+                        value={newTask.status}
+                        onChange={(e) =>
+                          setNewTask({
+                            ...newTask,
+                            status: e.target.value,
+                          })
+                        }
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3"
+                      >
+                        <option>Pending</option>
+                        <option>In Progress</option>
+                        <option>Completed</option>
+                      </select>
+
+                      <textarea
+                        placeholder="Description"
+                        value={newTask.description}
+                        onChange={(e) =>
+                          setNewTask({
+                            ...newTask,
+                            description: e.target.value,
+                          })
+                        }
+                        rows="3"
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 md:col-span-2"
+                      />
+                    </div>
+
+                    <button
+                      onClick={addTask}
+                      className="mb-6 rounded-lg bg-yellow-600 px-6 py-3 font-semibold hover:bg-yellow-700"
+                    >
+                      Add Task
+                    </button>
+
+                    <div className="space-y-4">
+                      {tasks.map((task) => (
+                        <div
+                          key={task._id}
+                          className="rounded-lg border border-slate-700 bg-slate-950 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <h3 className="text-lg font-semibold">
+                                {task.title}
+                              </h3>
+
+                              <p className="mt-1 text-sm text-slate-400">
+                                {task.description}
+                              </p>
+
+                              <p className="mt-2 text-sm">
+                                Due:{" "}
+                                <span className="text-slate-300">
+                                  {task.due_date || "No due date"}
+                                </span>
+                              </p>
+
+                              <p className="mt-1 text-sm">
+                                Priority:{" "}
+                                <span
+                                  className={
+                                    task.priority === "High"
+                                      ? "text-red-400"
+                                      : task.priority === "Medium"
+                                        ? "text-yellow-400"
+                                        : "text-green-400"
+                                  }
+                                >
+                                  {task.priority}
+                                </span>
+                              </p>
+                            </div>
+
+                            <div className="flex gap-3">
+                              <select
+                                value={task.status}
+                                onChange={(e) =>
+                                  updateTaskStatus(task, e.target.value)
+                                }
+                                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none"
+                              >
+                                <option>Pending</option>
+                                <option>In Progress</option>
+                                <option>Completed</option>
+                              </select>
+
+                              <button
+                                onClick={() => deleteTask(task._id)}
+                                className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold hover:bg-red-700"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
                   <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <input
