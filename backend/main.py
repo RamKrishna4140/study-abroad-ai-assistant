@@ -59,6 +59,9 @@ ALGORITHM = "HS256"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 
+COUNSELOR_USERNAME = "counselor"
+COUNSELOR_PASSWORD = "counselor123"
+
 security = HTTPBearer()
 
 # ADMIN_USERNAME = "admin"
@@ -69,7 +72,8 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default-session"
     document_id: Optional[str] = None
-    
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -87,21 +91,20 @@ def home():
 
 @app.post("/login")
 def login(request: LoginRequest):
-    if request.username != ADMIN_USERNAME or request.password != ADMIN_PASSWORD:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid username or password"
-        )
+    if request.username == ADMIN_USERNAME and request.password == ADMIN_PASSWORD:
+        token = create_token({"sub": request.username, "role": "admin"})
 
-    token = create_token({
-        "sub": request.username,
-        "role": "admin"
-    })
+        return {"access_token": token, "token_type": "bearer", "role": "admin"}
 
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+    if (
+        request.username == COUNSELOR_USERNAME
+        and request.password == COUNSELOR_PASSWORD
+    ):
+        token = create_token({"sub": request.username, "role": "counselor"})
+
+        return {"access_token": token, "token_type": "bearer", "role": "counselor"}
+
+    raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 @app.post("/chat")
@@ -187,7 +190,6 @@ class TaskRequest(BaseModel):
     due_date: str = ""
     status: str = "Pending"
     priority: str = "Medium"
-
 
 
 # Auth Helper Functions
