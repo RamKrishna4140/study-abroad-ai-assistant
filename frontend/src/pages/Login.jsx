@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 
 function Login() {
   const API_BASE = "http://127.0.0.1:8000";
-
   const navigate = useNavigate();
 
   const [username, setUsername] = useState("");
@@ -17,10 +16,8 @@ function Login() {
         password,
       });
 
-      localStorage.setItem(
-        "token",
-        res.data.access_token
-      );
+      localStorage.setItem("token", res.data.access_token);
+      localStorage.setItem("role", res.data.role);
 
       navigate("/dashboard");
     } catch (error) {
@@ -38,20 +35,16 @@ function Login() {
         <input
           placeholder="Username"
           value={username}
-          onChange={(e) =>
-            setUsername(e.target.value)
-          }
-          className="mb-4 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white"
+          onChange={(e) => setUsername(e.target.value)}
+          className="mb-4 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none"
         />
 
         <input
           type="password"
           placeholder="Password"
           value={password}
-          onChange={(e) =>
-            setPassword(e.target.value)
-          }
-          className="mb-6 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white"
+          onChange={(e) => setPassword(e.target.value)}
+          className="mb-6 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none"
         />
 
         <button

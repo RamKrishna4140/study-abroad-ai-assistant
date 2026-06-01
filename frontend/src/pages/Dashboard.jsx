@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import CRMNavbar from "../components/CRMNavbar";
 
 function Dashboard() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -75,12 +76,19 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#020617] p-8 text-white">
-      <h1 className="mb-8 text-4xl font-bold">FLCS Dashboard</h1>
+      <CRMNavbar />
+
+      <h1 className="mb-8 text-4xl font-bold">
+        FLCS Dashboard
+      </h1>
 
       <h2 className="mb-4 text-2xl font-bold">Student Stats</h2>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
         {studentCards.map((card) => (
-          <div key={card.title} className="rounded-xl border border-slate-700 bg-slate-900 p-6">
+          <div
+            key={card.title}
+            className="rounded-xl border border-slate-700 bg-slate-900 p-6"
+          >
             <p className="text-slate-400">{card.title}</p>
             <h2 className="mt-3 text-4xl font-bold">{card.value}</h2>
           </div>
@@ -90,7 +98,10 @@ function Dashboard() {
       <h2 className="mb-4 mt-10 text-2xl font-bold">Application Stats</h2>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {applicationCards.map((card) => (
-          <div key={card.title} className="rounded-xl border border-slate-700 bg-slate-900 p-6">
+          <div
+            key={card.title}
+            className="rounded-xl border border-slate-700 bg-slate-900 p-6"
+          >
             <p className="text-slate-400">{card.title}</p>
             <h2 className="mt-3 text-4xl font-bold">{card.value}</h2>
           </div>
@@ -100,7 +111,10 @@ function Dashboard() {
       <h2 className="mb-4 mt-10 text-2xl font-bold">Task Stats</h2>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-5">
         {taskCards.map((card) => (
-          <div key={card.title} className="rounded-xl border border-slate-700 bg-slate-900 p-6">
+          <div
+            key={card.title}
+            className="rounded-xl border border-slate-700 bg-slate-900 p-6"
+          >
             <p className="text-slate-400">{card.title}</p>
             <h2 className="mt-3 text-4xl font-bold">{card.value}</h2>
           </div>

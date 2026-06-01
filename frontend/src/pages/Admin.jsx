@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import CRMNavbar from "../components/CRMNavbar";
 
 function Admin() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -21,6 +22,7 @@ function Admin() {
 
   return (
     <div className="min-h-screen bg-[#020617] p-8 text-white">
+      <CRMNavbar />
       <h1 className="mb-6 text-4xl font-bold">Admin Knowledge Library</h1>
 
       <div className="space-y-4">

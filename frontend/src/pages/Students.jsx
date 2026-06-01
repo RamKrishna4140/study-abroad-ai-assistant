@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import CRMNavbar from "../components/CRMNavbar";
 
 function Students() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -66,6 +67,8 @@ function Students() {
 
   return (
     <div className="min-h-screen bg-[#020617] p-8 text-white">
+      <CRMNavbar />
+      
       <h1 className="mb-8 text-4xl font-bold">Student CRM</h1>
 
       <div className="mb-8 rounded-xl border border-slate-700 bg-slate-900 p-6">
