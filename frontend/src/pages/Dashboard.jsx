@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import CRMNavbar from "../components/CRMNavbar";
+import CRMLayout from "../layouts/CRMLayout";
 
 function Dashboard() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -75,12 +75,8 @@ function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#020617] p-8 text-white">
-      <CRMNavbar />
-
-      <h1 className="mb-8 text-4xl font-bold">
-        FLCS Dashboard
-      </h1>
+    <CRMLayout>
+      <h1 className="mb-8 text-4xl font-bold">FLCS Dashboard</h1>
 
       <h2 className="mb-4 text-2xl font-bold">Student Stats</h2>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
@@ -120,7 +116,7 @@ function Dashboard() {
           </div>
         ))}
       </div>
-    </div>
+    </CRMLayout>
   );
 }
 

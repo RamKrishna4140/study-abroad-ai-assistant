@@ -1,7 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
-import CRMNavbar from "../components/CRMNavbar";
+import CRMLayout from "../layouts/CRMLayout";
 
 function AiCrm() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -21,8 +21,7 @@ function AiCrm() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] p-8 text-white">
-      <CRMNavbar />
+    <CRMLayout>
       <h1 className="mb-2 text-4xl font-bold">AI CRM Assistant</h1>
       <p className="mb-8 text-slate-400">
         Ask questions from your student CRM data.
@@ -50,7 +49,7 @@ function AiCrm() {
           <ReactMarkdown>{answer}</ReactMarkdown>
         </div>
       )}
-    </div>
+    </CRMLayout>
   );
 }
 

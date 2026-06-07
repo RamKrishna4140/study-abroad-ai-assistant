@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import CRMNavbar from "../components/CRMNavbar";
+import CRMLayout from "../layouts/CRMLayout";
 
 function Admin() {
   const API_BASE = "http://127.0.0.1:8000";
@@ -21,8 +21,7 @@ function Admin() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#020617] p-8 text-white">
-      <CRMNavbar />
+    <CRMLayout>
       <h1 className="mb-6 text-4xl font-bold">Admin Knowledge Library</h1>
 
       <div className="space-y-4">
@@ -33,9 +32,7 @@ function Admin() {
           >
             <h2 className="text-xl font-semibold">{doc.source}</h2>
 
-            <p className="mt-2 text-sm text-slate-400">
-              Chunks: {doc.chunks}
-            </p>
+            <p className="mt-2 text-sm text-slate-400">Chunks: {doc.chunks}</p>
 
             <p className="text-sm text-slate-400">
               Uploaded: {new Date(doc.uploaded_at).toLocaleString()}
@@ -50,7 +47,7 @@ function Admin() {
           </div>
         ))}
       </div>
-    </div>
+    </CRMLayout>
   );
 }
 
