@@ -1,4 +1,5 @@
 # Imports
+from fastapi.responses import FileResponse
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException
@@ -38,6 +39,18 @@ timeline_collection = db["student_timeline"]
 student_documents_collection = db["student_documents"]
 applications_collection = db["student_applications"]
 tasks_collection = db["student_tasks"]
+
+
+def add_timeline(student_id, title, description=""):
+    timeline_collection.insert_one(
+        {
+            "student_id": student_id,
+            "title": title,
+            "description": description,
+            "created_at": datetime.utcnow(),
+        }
+    )
+
 
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
@@ -754,6 +767,7 @@ async def upload_student_document(
         os.makedirs("student_documents", exist_ok=True)
 
         file_path = f"student_documents/{student_id}_{file.filename}"
+        stored_filename = f"{student_id}_{file.filename}"
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
@@ -762,11 +776,12 @@ async def upload_student_document(
             {
                 "student_id": student_id,
                 "document_type": document_type,
-                "filename": file.filename,
                 "file_path": file_path,
+                "stored_filename": stored_filename,
                 "uploaded_at": datetime.utcnow(),
             }
         )
+        add_timeline(student_id, f"Document Uploaded", f"{document_type} uploaded")
 
         return {"message": "Document uploaded successfully", "filename": file.filename}
 
@@ -783,6 +798,22 @@ def get_student_documents(student_id: str):
     )
 
     return {"documents": documents}
+
+
+@app.get("/student-documents/view/{filename}")
+def view_student_document(filename: str):
+    file_path = os.path.join("student_documents", filename)
+
+    return FileResponse(file_path, media_type="application/pdf")
+
+
+@app.get("/student-documents/download/{filename}")
+def download_student_document(filename: str):
+    file_path = os.path.join("student_documents", filename)
+
+    return FileResponse(
+        file_path, filename=filename, media_type="application/octet-stream"
+    )
 
 
 @app.post("/crm-chat")
@@ -862,13 +893,10 @@ def add_student_application(application: ApplicationRequest):
 
     result = applications_collection.insert_one(application_data)
 
-    timeline_collection.insert_one(
-        {
-            "student_id": application.student_id,
-            "title": f"Application added: {application.university}",
-            "description": f"Course: {application.course} | Status: {application.status}",
-            "created_at": datetime.utcnow(),
-        }
+    add_timeline(
+        application.student_id,
+        f"Application added: {application.university}",
+        f"Course: {application.course} | Status: {application.status}",
     )
 
     return {
@@ -984,13 +1012,10 @@ def create_task(task: TaskRequest):
 
     result = tasks_collection.insert_one(task_data)
 
-    timeline_collection.insert_one(
-        {
-            "student_id": task.student_id,
-            "title": f"Task added: {task.title}",
-            "description": f"Priority: {task.priority} | Due: {task.due_date}",
-            "created_at": datetime.utcnow(),
-        }
+    add_timeline(
+        task.student_id,
+        f"Task added: {task.title}",
+        f"Priority: {task.priority} | Due: {task.due_date}",
     )
 
     return {"message": "Task created successfully", "task_id": str(result.inserted_id)}
