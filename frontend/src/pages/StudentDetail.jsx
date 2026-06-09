@@ -46,6 +46,18 @@ function StudentDetail() {
     setApplications(res.data.applications || []);
   };
 
+  const deleteDocument = async (documentId) => {
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete this document?",
+    );
+
+    if (!confirmDelete) return;
+
+    await axios.delete(`${API_BASE}/student-documents/${documentId}`);
+
+    fetchDocuments();
+  };
+
   const addApplication = async () => {
     if (!newApplication.university.trim()) return;
 
@@ -711,17 +723,50 @@ function StudentDetail() {
                   </button>
                 </div>
 
-                <div className="space-y-3">
-                  {documents.map((doc, index) => (
+                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {documents.map((doc) => (
                     <div
-                      key={index}
-                      className="rounded-lg border border-slate-700 bg-slate-950 p-4"
+                      key={doc._id}
+                      className="rounded-xl border border-slate-700 bg-slate-950 p-5"
                     >
-                      <h3 className="font-semibold">{doc.document_type}</h3>
-                      <p className="text-sm text-slate-400">{doc.filename}</p>
-                      <p className="text-xs text-slate-500">
-                        {new Date(doc.uploaded_at).toLocaleString()}
-                      </p>
+                      <div className="mb-4">
+                        <h3 className="text-lg font-semibold text-white">
+                          {doc.document_type}
+                        </h3>
+
+                        <p className="mt-1 text-sm text-slate-400">
+                          {doc.filename}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          Uploaded: {new Date(doc.uploaded_at).toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-3">
+                        <a
+                          href={`${API_BASE}/student-documents/view/${doc.stored_filename}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                        >
+                          👁 View
+                        </a>
+
+                        <a
+                          href={`${API_BASE}/student-documents/download/${doc.stored_filename}`}
+                          className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                        >
+                          ⬇ Download
+                        </a>
+
+                        <button
+                          onClick={() => deleteDocument(doc._id)}
+                          className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                        >
+                          🗑 Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -9,6 +9,7 @@ function Students() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  
 
   const [form, setForm] = useState({
     name: "",
