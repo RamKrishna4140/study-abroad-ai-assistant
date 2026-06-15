@@ -1087,6 +1087,74 @@ def task_stats():
     }
 
 
+@app.get("/pending-document-stats")
+def pending_document_stats():
+    required_documents = [
+        "Passport",
+        "Transcript",
+        "Degree",
+        "IELTS",
+        "Bank Balance",
+        "Offer Letter",
+        "Visa File",
+    ]
+
+    students = list(students_collection.find({}, {"_id": 1}))
+    total_students = len(students)
+
+    result = {}
+
+    for doc_type in required_documents:
+        uploaded_count = student_documents_collection.count_documents(
+            {"document_type": doc_type}
+        )
+
+        result[doc_type] = {
+            "uploaded": uploaded_count,
+            "missing": max(total_students - uploaded_count, 0),
+        }
+
+    return {"total_students": total_students, "documents": result}
+
+@app.get("/missing-documents")
+def missing_documents():
+    required_documents = [
+        "Passport",
+        "Transcript",
+        "Degree",
+        "IELTS",
+        "Bank Balance",
+        "Offer Letter",
+        "Visa File",
+    ]
+
+    students = list(students_collection.find())
+
+    result = []
+
+    for student in students:
+        student_id = str(student["_id"])
+
+        uploaded_docs = student_documents_collection.distinct(
+            "document_type",
+            {"student_id": student_id}
+        )
+
+        missing_docs = [
+            doc
+            for doc in required_documents
+            if doc not in uploaded_docs
+        ]
+
+        result.append({
+            "student_id": student_id,
+            "name": student.get("name", ""),
+            "email": student.get("email", ""),
+            "missing_documents": missing_docs,
+        })
+
+    return result
+
 @app.get("/all-tasks")
 def get_all_tasks():
     tasks = list(tasks_collection.find())
