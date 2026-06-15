@@ -39,6 +39,16 @@ function Dashboard() {
     setApplicationStats(res.data);
   };
 
+  const fetchDocumentStats = async () => {
+    const res = await axios.get(`${API_BASE}/pending-document-stats`);
+    setDocumentStats(res.data);
+  };
+
+  const [documentStats, setDocumentStats] = useState({
+    total_students: 0,
+    documents: {},
+  });
+
   const fetchTaskStats = async () => {
     const res = await axios.get(`${API_BASE}/task-stats`);
     setTaskStats(res.data);
@@ -48,6 +58,7 @@ function Dashboard() {
     fetchStats();
     fetchApplicationStats();
     fetchTaskStats();
+    fetchDocumentStats();
   }, []);
 
   const studentCards = [
@@ -113,6 +124,30 @@ function Dashboard() {
           >
             <p className="text-slate-400">{card.title}</p>
             <h2 className="mt-3 text-4xl font-bold">{card.value}</h2>
+          </div>
+        ))}
+      </div>
+      <h2 className="mb-4 mt-10 text-2xl font-bold">Pending Documents</h2>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        {Object.entries(documentStats.documents).map(([docType, data]) => (
+          <div
+            key={docType}
+            className="rounded-xl border border-slate-700 bg-slate-900 p-6"
+          >
+            <p className="text-slate-400">{docType}</p>
+
+            <div className="mt-4 flex justify-between">
+              <div>
+                <p className="text-sm text-green-400">Uploaded</p>
+                <h2 className="text-3xl font-bold">{data.uploaded}</h2>
+              </div>
+
+              <div>
+                <p className="text-sm text-red-400">Missing</p>
+                <h2 className="text-3xl font-bold">{data.missing}</h2>
+              </div>
+            </div>
           </div>
         ))}
       </div>

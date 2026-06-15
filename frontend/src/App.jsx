@@ -11,6 +11,7 @@ import Applications from "./pages/Applications";
 import Tasks from "./pages/Tasks";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
+import MissingDocuments from "./pages/MissingDocuments";
 
 function App() {
   return (
@@ -78,6 +79,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Tasks />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/missing-documents"
+          element={
+            <ProtectedRoute>
+              <MissingDocuments />
             </ProtectedRoute>
           }
         />
